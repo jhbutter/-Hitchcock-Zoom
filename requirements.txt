@@ -1,0 +1,12 @@
+# Web Interface
+gradio==3.50.2
+
+# Computer Vision (包含标准 OpenCV 及扩展模块，如 CSRT 追踪器)
+# 注意：不要同时安装 opencv-python，否则会冲突
+opencv-contrib-python<4.11
+
+# Numerical Computation
+numpy==1.26.4
+
+# Video Encoding (FFmpeg binaries)
+imageio-ffmpeg>=0.4.9
