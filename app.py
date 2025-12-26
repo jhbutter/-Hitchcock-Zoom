@@ -2,14 +2,21 @@ import gradio as gr
 import cv2
 import numpy as np
 import os
+import tempfile
 from core import DollyZoomProcessor
 import socket
 
-def get_first_frame(video_path):
+def get_first_frame(video_path, reverse=False):
     if not video_path:
         return None
     
     cap = cv2.VideoCapture(video_path)
+    if reverse:
+        # 如果倒放，读取最后一帧作为“第一帧”供用户涂抹
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if frame_count > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count - 1)
+            
     ret, frame = cap.read()
     cap.release()
     
@@ -17,14 +24,54 @@ def get_first_frame(video_path):
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     return None
 
-def process_video(video_path, sketch_data, progress=gr.Progress()):
+def reverse_video_file(video_path):
+    """倒放视频并返回临时文件路径"""
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    
+    # 使用 tempfile 创建临时文件
+    fd, temp_path = tempfile.mkstemp(suffix=".mp4")
+    os.close(fd)
+    
+    out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+    
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+    cap.release()
+    
+    # 内存警告：如果视频过长，这里会消耗大量内存
+    # 实际生产环境建议分块处理或限制时长
+    
+    for frame in reversed(frames):
+        out.write(frame)
+    out.release()
+    
+    return temp_path
+
+def process_video(video_path, sketch_data, reverse=False, progress=gr.Progress()):
     if not video_path:
         return None
     if sketch_data is None:
         return None
 
+    # 处理倒放逻辑
+    target_video_path = video_path
+    if reverse:
+        progress(0, desc="Reversing video...")
+        try:
+            target_video_path = reverse_video_file(video_path)
+        except Exception as e:
+            raise ValueError(f"倒放视频失败 (可能是视频过长导致内存不足): {e}")
+
     # 获取视频尺寸，确保 Mask 与视频尺寸一致
-    cap = cv2.VideoCapture(video_path)
+    cap = cv2.VideoCapture(target_video_path)
     ret, v_frame = cap.read()
     cap.release()
     if not ret:
@@ -94,9 +141,16 @@ def process_video(video_path, sketch_data, progress=gr.Progress()):
     def update_progress(curr, total):
         progress(curr / total, desc=f"Processing Frame {curr}/{total}")
         
-    processor = DollyZoomProcessor(video_path, output_path)
+    processor = DollyZoomProcessor(target_video_path, output_path)
     processor.process(initial_bbox, progress_callback=update_progress)
     
+    # 清理临时文件
+    if reverse and target_video_path != video_path and os.path.exists(target_video_path):
+        try:
+            os.remove(target_video_path)
+        except:
+            pass
+            
     return output_path
 
 with gr.Blocks(title="Hitchcock Dolly Zoom Effect") as demo:
@@ -106,6 +160,7 @@ with gr.Blocks(title="Hitchcock Dolly Zoom Effect") as demo:
     with gr.Row():
         with gr.Column():
             video_input = gr.Video(label="1. 上传视频素材")
+            reverse_check = gr.Checkbox(label="倒放输入视频 (例如：将推进变为拉远)", value=False)
             extract_btn = gr.Button("提取第一帧", variant="primary")
             
         with gr.Column():
@@ -123,13 +178,13 @@ with gr.Blocks(title="Hitchcock Dolly Zoom Effect") as demo:
     # 事件绑定
     extract_btn.click(
         fn=get_first_frame,
-        inputs=[video_input],
+        inputs=[video_input, reverse_check],
         outputs=[image_input]
     )
     
     run_btn.click(
         fn=process_video,
-        inputs=[video_input, image_input],
+        inputs=[video_input, image_input, reverse_check],
         outputs=[video_output]
     )
 
