@@ -55,7 +55,7 @@ def reverse_video_file(video_path):
     
     return temp_path
 
-def process_video(video_path, sketch_data, reverse=False, progress=gr.Progress()):
+def process_video(video_path, sketch_data, reverse_input=False, reverse_output=False, progress=gr.Progress()):
     if not video_path:
         return None
     if sketch_data is None:
@@ -63,8 +63,8 @@ def process_video(video_path, sketch_data, reverse=False, progress=gr.Progress()
 
     # 处理倒放逻辑
     target_video_path = video_path
-    if reverse:
-        progress(0, desc="Reversing video...")
+    if reverse_input:
+        progress(0, desc="Reversing input video...")
         try:
             target_video_path = reverse_video_file(video_path)
         except Exception as e:
@@ -135,7 +135,9 @@ def process_video(video_path, sketch_data, reverse=False, progress=gr.Progress()
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
-    output_path = os.path.join(output_dir, "gradio_output.mp4")
+    # 临时输出路径（如果是倒放输出，这只是中间文件）
+    temp_output_filename = "temp_dolly_output.mp4" if reverse_output else "gradio_output.mp4"
+    output_path = os.path.join(output_dir, temp_output_filename)
     
     # 进度回调
     def update_progress(curr, total):
@@ -144,12 +146,33 @@ def process_video(video_path, sketch_data, reverse=False, progress=gr.Progress()
     processor = DollyZoomProcessor(target_video_path, output_path)
     processor.process(initial_bbox, progress_callback=update_progress)
     
-    # 清理临时文件
-    if reverse and target_video_path != video_path and os.path.exists(target_video_path):
+    # 清理输入临时文件
+    if reverse_input and target_video_path != video_path and os.path.exists(target_video_path):
         try:
             os.remove(target_video_path)
         except:
             pass
+            
+    # 处理输出倒放逻辑
+    if reverse_output:
+        progress(0, desc="Reversing output video...")
+        final_output_path = os.path.join(output_dir, "gradio_output_reversed.mp4")
+        try:
+            reversed_temp_path = reverse_video_file(output_path)
+            # 移动/重命名临时文件到最终输出路径
+            if os.path.exists(final_output_path):
+                os.remove(final_output_path)
+            os.rename(reversed_temp_path, final_output_path)
+            
+            # 删除中间生成的正向 Dolly Zoom 视频
+            if os.path.exists(output_path):
+                os.remove(output_path)
+                
+            return final_output_path
+        except Exception as e:
+            print(f"Error reversing output: {e}")
+            # 如果倒放失败，返回正向的
+            return output_path
             
     return output_path
 
@@ -160,7 +183,9 @@ with gr.Blocks(title="Hitchcock Dolly Zoom Effect") as demo:
     with gr.Row():
         with gr.Column():
             video_input = gr.Video(label="1. 上传视频素材")
-            reverse_check = gr.Checkbox(label="倒放输入视频 (例如：将推进变为拉远)", value=False)
+            with gr.Row():
+                reverse_input_check = gr.Checkbox(label="倒放输入视频 (例如：将推进变为拉远)", value=False)
+                reverse_output_check = gr.Checkbox(label="倒放生成结果", value=False)
             extract_btn = gr.Button("提取第一帧", variant="primary")
             
         with gr.Column():
@@ -178,13 +203,13 @@ with gr.Blocks(title="Hitchcock Dolly Zoom Effect") as demo:
     # 事件绑定
     extract_btn.click(
         fn=get_first_frame,
-        inputs=[video_input, reverse_check],
+        inputs=[video_input, reverse_input_check],
         outputs=[image_input]
     )
     
     run_btn.click(
         fn=process_video,
-        inputs=[video_input, image_input, reverse_check],
+        inputs=[video_input, image_input, reverse_input_check, reverse_output_check],
         outputs=[video_output]
     )
 
