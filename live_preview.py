@@ -117,12 +117,19 @@ class LiveDollyZoomApp:
         success, box_small = self.tracker.update(frame_small)
         
         is_too_fast = False
+        
+        # 记录当前的 bbox 用于录制初始化
+        self.current_bbox = None
+        
         if success:
             # 还原坐标
             x = box_small[0] / scale_factor
             y = box_small[1] / scale_factor
             w = box_small[2] / scale_factor
             h = box_small[3] / scale_factor
+            
+            # 保存当前 bbox (x, y, w, h)
+            self.current_bbox = (int(x), int(y), int(w), int(h))
             
             curr_cx = x + w / 2
             curr_cy = y + h / 2
@@ -172,7 +179,7 @@ class LiveDollyZoomApp:
             [scale, 0, self.init_cx - scale * cx],
             [0, scale, self.init_cy - scale * cy]
         ])
-        return cv2.warpAffine(frame, M, (self.width, self.height), borderMode=cv2.BORDER_REPLICATE)
+        return cv2.warpAffine(frame, M, (self.width, self.height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
 
     def _draw_hud(self, frame, fps, scale=None, tracking_success=True, is_too_fast=False):
         # FPS
@@ -356,6 +363,12 @@ class LiveDollyZoomApp:
                         self.recording = True
                         self.recording_start_time = time.time()
                         self.recorded_frames = []
+                        # 如果当前有有效的 bbox，更新为录制的初始 bbox
+                        if hasattr(self, 'current_bbox') and self.current_bbox is not None:
+                            self.initial_bbox_for_recording = self.current_bbox
+                            print(f"录制开始，初始 bbox 更新为: {self.initial_bbox_for_recording}")
+                        else:
+                            print(f"录制开始，使用原始 bbox: {self.initial_bbox_for_recording}")
                         print("开始录制...")
                     else:
                         self.recording = False

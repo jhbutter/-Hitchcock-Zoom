@@ -184,8 +184,8 @@ class DollyZoomProcessor:
         kalman.statePre = np.array([[1.0], [init_cx], [init_cy], [0], [0], [0]], np.float32)
         kalman.statePost = np.array([[1.0], [init_cx], [init_cy], [0], [0], [0]], np.float32)
 
-        # 滑动窗口平滑
-        window_size = 30
+        # 滑动窗口平滑 (适度减小窗口)
+        window_size = 15
         scale_history = []
         cx_history = []
         cy_history = []
@@ -270,7 +270,7 @@ class DollyZoomProcessor:
                 [0, smooth_scale, target_cy - smooth_scale * smooth_cy]
             ])
             
-            frame_zoomed = cv2.warpAffine(frame, M, (self.width, self.height), borderMode=cv2.BORDER_REPLICATE)
+            frame_zoomed = cv2.warpAffine(frame, M, (self.width, self.height), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
             
             # out.write(frame_zoomed)
             # 写入到 FFmpeg stdin
