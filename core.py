@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 import os
+import imageio_ffmpeg
+import subprocess
 
 class DollyZoomProcessor:
     def __init__(self, video_path, output_path):
@@ -14,6 +16,33 @@ class DollyZoomProcessor:
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # 获取 ffmpeg 路径
+        self.ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        
+    def _get_ffmpeg_writer(self, output_path, fps, width, height):
+        """创建一个 FFmpeg 管道写入器"""
+        cmd = [
+            self.ffmpeg_exe,
+            '-y', # 覆盖输出
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-s', f'{width}x{height}',
+            '-pix_fmt', 'bgr24', # OpenCV 输出是 BGR
+            '-r', str(fps),
+            '-i', '-', # 从 stdin 读取
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p', # 浏览器兼容性必需
+            '-preset', 'fast',
+            '-crf', '23',
+            '-loglevel', 'error', # 屏蔽日志，只显示错误
+            output_path
+        ]
+        
+        # 启动子进程
+        # bufsize 设大一点有助于性能
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        return p
         
     def get_first_frame(self):
         """获取第一帧用于选择主体"""
@@ -80,9 +109,10 @@ class DollyZoomProcessor:
         # 重置视频流
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         
-        # 初始化写入器
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(self.output_path, fourcc, self.fps, (self.width, self.height))
+        # 初始化写入器 (使用 FFmpeg 管道)
+        # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # out = cv2.VideoWriter(self.output_path, fourcc, self.fps, (self.width, self.height))
+        ffmpeg_writer = self._get_ffmpeg_writer(self.output_path, self.fps, self.width, self.height)
         
         # 初始化追踪器
         tracker = cv2.TrackerCSRT_create()
@@ -241,11 +271,23 @@ class DollyZoomProcessor:
             ])
             
             frame_zoomed = cv2.warpAffine(frame, M, (self.width, self.height), borderMode=cv2.BORDER_REPLICATE)
-            out.write(frame_zoomed)
+            
+            # out.write(frame_zoomed)
+            # 写入到 FFmpeg stdin
+            try:
+                ffmpeg_writer.stdin.write(frame_zoomed.tobytes())
+            except Exception as e:
+                print(f"Error writing to ffmpeg: {e}")
+                break
             
             frame_idx += 1
             if progress_callback and frame_idx % 5 == 0:
                 progress_callback(frame_idx, self.total_frames)
                 
         self.cap.release()
-        out.release()
+        # out.release()
+        
+        # 关闭 FFmpeg 管道
+        if ffmpeg_writer.stdin:
+            ffmpeg_writer.stdin.close()
+        ffmpeg_writer.wait()

@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import time
 import os
+import imageio_ffmpeg
+import subprocess
 from core import DollyZoomProcessor
 
 class LiveDollyZoomApp:
@@ -224,12 +226,41 @@ class LiveDollyZoomApp:
             
         print(f"录制统计: 时长 {recording_duration:.2f}s, 帧数 {len(self.recorded_frames)}, 实际帧率 {real_fps:.2f} FPS")
         
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out_writer = cv2.VideoWriter(raw_output, fourcc, real_fps, (self.width, self.height))
+        # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # out_writer = cv2.VideoWriter(raw_output, fourcc, real_fps, (self.width, self.height))
+        
+        # 使用 FFmpeg 管道写入 H.264
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        cmd = [
+            ffmpeg_exe,
+            '-y',
+            '-f', 'rawvideo',
+            '-vcodec', 'rawvideo',
+            '-s', f'{self.width}x{self.height}',
+            '-pix_fmt', 'bgr24',
+            '-r', str(real_fps),
+            '-i', '-',
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-preset', 'fast',
+            '-crf', '23',
+            '-loglevel', 'error', # 屏蔽日志
+            raw_output
+        ]
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         
         for f in self.recorded_frames:
-            out_writer.write(f)
-        out_writer.release()
+            # out_writer.write(f)
+            try:
+                p.stdin.write(f.tobytes())
+            except Exception as e:
+                print(f"Error writing to ffmpeg live: {e}")
+                break
+                
+        # out_writer.release()
+        if p.stdin:
+            p.stdin.close()
+        p.wait()
         
         print("原始视频已保存，正在应用高质量 Dolly Zoom 效果...")
         cv2.destroyWindow("Live Preview")

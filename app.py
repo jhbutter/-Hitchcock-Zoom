@@ -5,6 +5,51 @@ import os
 import tempfile
 from core import DollyZoomProcessor
 import socket
+import imageio_ffmpeg
+import subprocess
+
+def convert_to_h264(video_path, progress=gr.Progress()):
+    """
+    将视频转换为浏览器兼容的 H.264 MP4 格式
+    """
+    if not video_path:
+        return None
+        
+    progress(0, desc="正在准备转码...")
+    
+    # 创建临时输出文件
+    fd, output_path = tempfile.mkstemp(suffix=".mp4")
+    os.close(fd)
+    
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    
+    # 构建 ffmpeg 命令
+    # -y: 覆盖输出文件
+    # -c:v libx264: 使用 H.264 视频编码
+    # -c:a aac: 使用 AAC 音频编码
+    # -preset fast: 编码速度优先
+    # -crf 23: 默认质量
+    # -loglevel error: 屏蔽日志
+    cmd = [
+        ffmpeg_exe, '-y',
+        '-i', video_path,
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-preset', 'fast',
+        '-loglevel', 'error',
+        output_path
+    ]
+    
+    progress(0.1, desc="正在转码 (这可能需要一点时间)...")
+    
+    try:
+        # 运行转码
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return output_path
+    except subprocess.CalledProcessError as e:
+        print(f"转码失败: {e}")
+        # 如果转码失败，返回原视频（虽然可能还是播不了，但至少不报错）
+        return video_path
 
 def get_first_frame(video_path, reverse=False):
     if not video_path:
@@ -30,13 +75,33 @@ def reverse_video_file(video_path):
     fps = cap.get(cv2.CAP_PROP_FPS)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     
     # 使用 tempfile 创建临时文件
     fd, temp_path = tempfile.mkstemp(suffix=".mp4")
     os.close(fd)
     
-    out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+    # out = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+    
+    # 使用 FFmpeg 管道写入 H.264
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg_exe,
+        '-y',
+        '-f', 'rawvideo',
+        '-vcodec', 'rawvideo',
+        '-s', f'{width}x{height}',
+        '-pix_fmt', 'bgr24',
+        '-r', str(fps),
+        '-i', '-',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-loglevel', 'error', # 屏蔽日志
+        temp_path
+    ]
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     
     frames = []
     while True:
@@ -50,8 +115,17 @@ def reverse_video_file(video_path):
     # 实际生产环境建议分块处理或限制时长
     
     for frame in reversed(frames):
-        out.write(frame)
-    out.release()
+        # out.write(frame)
+        try:
+            p.stdin.write(frame.tobytes())
+        except Exception as e:
+            print(f"Error writing to ffmpeg reverse: {e}")
+            break
+            
+    # out.release()
+    if p.stdin:
+        p.stdin.close()
+    p.wait()
     
     return temp_path
 
@@ -182,9 +256,10 @@ with gr.Blocks(title="Hitchcock Dolly Zoom Effect") as demo:
     
     with gr.Row():
         with gr.Column():
-            video_input = gr.Video(label="1. 上传视频素材")
+            video_input = gr.Video(label="1. 上传视频素材", interactive=True, height=360)
+            convert_btn = gr.Button("⚠️ 视频无法播放？点击转码", variant="secondary")
             with gr.Row():
-                reverse_input_check = gr.Checkbox(label="倒放输入视频 (例如：将推进变为拉远)", value=False)
+                reverse_input_check = gr.Checkbox(label="倒放输入视频", value=False)
                 reverse_output_check = gr.Checkbox(label="倒放生成结果", value=False)
             extract_btn = gr.Button("提取第一帧", variant="primary")
             
@@ -201,6 +276,12 @@ with gr.Blocks(title="Hitchcock Dolly Zoom Effect") as demo:
     video_output = gr.Video(label="3. 生成结果")
     
     # 事件绑定
+    convert_btn.click(
+        fn=convert_to_h264,
+        inputs=[video_input],
+        outputs=[video_input]
+    )
+
     extract_btn.click(
         fn=get_first_frame,
         inputs=[video_input, reverse_input_check],
