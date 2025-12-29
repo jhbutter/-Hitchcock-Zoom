@@ -18,6 +18,9 @@ class LiveDollyZoomApp:
         self.height = 0
         self.fps_cam = 30.0
         
+        # Output FPS configuration (None = Real-time)
+        self.output_fps = None
+        
         # 追踪与处理参数
         self.process_width = 480  # 追踪时的降采样宽度
         self.tracker = None
@@ -231,7 +234,10 @@ class LiveDollyZoomApp:
         else:
             real_fps = self.fps_cam
             
-        print(f"录制统计: 时长 {recording_duration:.2f}s, 帧数 {len(self.recorded_frames)}, 实际帧率 {real_fps:.2f} FPS")
+        # Decide final FPS
+        final_fps = self.output_fps if self.output_fps is not None else real_fps
+            
+        print(f"录制统计: 时长 {recording_duration:.2f}s, 帧数 {len(self.recorded_frames)}, 实际帧率 {real_fps:.2f} FPS, 输出帧率 {final_fps:.2f} FPS")
         
         # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         # out_writer = cv2.VideoWriter(raw_output, fourcc, real_fps, (self.width, self.height))
@@ -245,7 +251,7 @@ class LiveDollyZoomApp:
             '-vcodec', 'rawvideo',
             '-s', f'{self.width}x{self.height}',
             '-pix_fmt', 'bgr24',
-            '-r', str(real_fps),
+            '-r', str(final_fps),
             '-i', '-',
             '-c:v', 'libx264',
             '-pix_fmt', 'yuv420p',
@@ -284,11 +290,14 @@ class LiveDollyZoomApp:
             
             print(f"\n✅ 处理完成！文件已保存至: {dolly_output}")
             print("按任意键继续预览...")
+            
+            return dolly_output
                 
         except Exception as e:
             print(f"处理失败: {e}")
             import traceback
             traceback.print_exc()
+            return None
 
     def run(self):
         if self.cap is None:
